@@ -76,14 +76,14 @@ app.get('/api/health', (req, res) => {
 // 2. USER AUTHENTICATION ENDPOINTS
 // ==========================================
 
-// Register / Create Account
-app.post('/api/auth/register', (req, res) => {
-  const { studentId, name, examGoal, pin, avatarId, isPro } = req.body;
-  if (!studentId || !name) {
+function handleRegister(req, res) {
+  const { studentId, padhloId, name, examGoal, pin, avatarId, isPro } = req.body;
+  const actualId = studentId || padhloId;
+  if (!actualId || !name) {
     return res.status(400).json({ error: 'studentId and name are required' });
   }
 
-  const cleanId = studentId.trim().toUpperCase();
+  const cleanId = actualId.trim().toUpperCase();
   const users = loadData(USERS_FILE, {});
 
   if (users[cleanId]) {
@@ -99,6 +99,7 @@ app.post('/api/auth/register', (req, res) => {
       message: 'Account updated successfully',
       user: {
         studentId: users[cleanId].studentId,
+        padhloId: users[cleanId].studentId,
         name: users[cleanId].name,
         examGoal: users[cleanId].examGoal,
         avatarId: users[cleanId].avatarId,
@@ -111,6 +112,7 @@ app.post('/api/auth/register', (req, res) => {
   const token = generateToken(cleanId);
   const newUser = {
     studentId: cleanId,
+    padhloId: cleanId,
     name: name.trim(),
     examGoal: examGoal || 'General Exam',
     pinHash: hashPin(pin || '1234'),
@@ -124,12 +126,13 @@ app.post('/api/auth/register', (req, res) => {
   users[cleanId] = newUser;
   saveData(USERS_FILE, users);
 
-  console.log(`[AUTH] 👤 Registered Student: ${newUser.name} (${newUser.studentId}) on External SSD`);
+  console.log(`[AUTH] 👤 Registered Student: ${newUser.name} (${newUser.studentId}) on Server`);
   res.json({
     success: true,
-    message: 'Registered successfully on External SSD',
+    message: 'Registered successfully',
     user: {
       studentId: newUser.studentId,
+      padhloId: newUser.studentId,
       name: newUser.name,
       examGoal: newUser.examGoal,
       avatarId: newUser.avatarId,
@@ -137,14 +140,10 @@ app.post('/api/auth/register', (req, res) => {
       token: newUser.token
     }
   });
-});
+}
 
-// Alias for client compatibility
-app.post('/api/students/register', (req, res) => {
-  const { padhloId, studentId, name, examGoal, avatarId, isPro, pin } = req.body;
-  req.body.studentId = studentId || padhloId;
-  return app._router.handle(req, res, () => {});
-});
+app.post('/api/auth/register', handleRegister);
+app.post('/api/students/register', handleRegister);
 
 // Login with studentId + PIN
 app.post('/api/auth/login', (req, res) => {
@@ -488,10 +487,70 @@ app.get('/api/telemetry/stats', (req, res) => {
   });
 });
 
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ankit_iit_2026';
+
+// Full Backup Export for External SSD Sync (Protected by Admin Secret Key)
+app.get('/api/admin/export', (req, res) => {
+  const key = req.query.key || req.headers['x-admin-key'];
+  if (key !== ADMIN_SECRET) {
+    return res.status(403).json({ error: 'Unauthorized: Valid Admin Secret Key required' });
+  }
+
+  const users = loadData(USERS_FILE, {});
+  const groups = loadData(GROUPS_FILE, {});
+  const requests = loadData(REQUESTS_FILE, {});
+  const messages = loadData(MESSAGES_FILE, {});
+  const installs = loadData(INSTALLS_FILE, []);
+  const sessions = loadData(SESSIONS_FILE, []);
+
+  res.json({
+    timestamp: new Date().toISOString(),
+    users,
+    groups,
+    requests,
+    messages,
+    installs,
+    sessions
+  });
+});
+
 // ==========================================
-// 5. EXTERNAL SSD LIVE ADMIN DASHBOARD
+// 5. EXTERNAL SSD LIVE ADMIN DASHBOARD (OWNER PROTECTED)
 // ==========================================
 app.get('/admin', (req, res) => {
+  const key = req.query.key;
+  if (key !== ADMIN_SECRET) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>PadhLo Owner Portal - Restricted Access</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #070913; color: #FFF; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+          .card { background: #0F1528; border: 1px solid #1E293B; border-radius: 18px; padding: 36px 28px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+          input { width: 100%; padding: 14px; border-radius: 12px; border: 1px solid #334155; background: #141A2E; color: #FFF; font-size: 15px; margin: 18px 0 14px 0; box-sizing: border-box; text-align: center; }
+          button { width: 100%; padding: 14px; border-radius: 12px; border: none; background: linear-gradient(135deg, #8B5CF6, #6366F1); color: #FFF; font-weight: bold; font-size: 15px; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div style="font-size: 44px; margin-bottom: 12px;">🛡️</div>
+          <h2 style="margin: 0 0 6px 0;">PadhLo Owner Portal</h2>
+          <p style="color: #94A3B8; font-size: 13px; margin: 0;">Restricted Access • Enter Owner Secret Key</p>
+          ${key ? '<p style="color:#EF4444; font-size:12px; font-weight:bold; margin-top:10px;">❌ Invalid Secret Key! Access Denied.</p>' : ''}
+          <form method="GET" action="/admin">
+            <input type="password" name="key" placeholder="Enter Owner Secret Key" required autofocus>
+            <button type="submit">Unlock Dashboard</button>
+          </form>
+          <p style="color:#64748B; font-size:11px; margin-top:18px;">Designed by Future IITian Ankit • 100% Secure</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
   const users = loadData(USERS_FILE, {});
   const groups = loadData(GROUPS_FILE, {});
   const installs = loadData(INSTALLS_FILE, []);
@@ -577,7 +636,10 @@ app.get('/admin', (req, res) => {
           <h1 style="margin:0; font-size: 24px; color: #FFF;">🚀 PadhLo External SSD Backend Server</h1>
           <p style="margin: 4px 0 0 0; color: var(--text-muted); font-size: 13px;">Running on Dedicated External SSD Drive • Live Authentication, Multi-Device Sync, & Installs</p>
         </div>
-        <div class="ssd-badge">💾 External SSD Active</div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <a href="/api/admin/export?key=${key}" download="padhlo_ssd_backup.json" style="background:#8B5CF6; color:white; padding:8px 14px; border-radius:10px; text-decoration:none; font-weight:bold; font-size:12px;">💾 Download Data to SSD</a>
+          <div class="ssd-badge">💾 External SSD Active</div>
+        </div>
       </div>
 
       <div class="path-box">
